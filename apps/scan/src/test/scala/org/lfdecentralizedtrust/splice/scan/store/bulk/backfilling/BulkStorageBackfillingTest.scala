@@ -88,6 +88,7 @@ class BulkStorageBackfillingTest
       folders: => Seq[(String, Seq[ObjectKeyAndChecksum])],
       snapshotsByTime: => Seq[(CantonTimestamp, Seq[ObjectKeyAndChecksum])],
       val updateListings: AtomicInteger = new AtomicInteger(0),
+      noPeerWillHold: Boolean = false,
   ) extends BulkObjectListing {
 
     override def updateObjects(
@@ -100,7 +101,8 @@ class BulkStorageBackfillingTest
     ): Future[PeerListing[BulkStorageObjects.UpdateObjectsPage]] = {
       updateListings.incrementAndGet()
       val held = folders
-      if (!held.lastOption.exists { case (name, _) => folderRange(name)._2 >= availableAt })
+      if (noPeerWillHold) Future.successful(PeerListing.NoPeerWillHold)
+      else if (!held.lastOption.exists { case (name, _) => folderRange(name)._2 >= availableAt })
         Future.successful(PeerListing.NotAvailableYet)
       else {
         val inRange = held.filter { case (name, _) =>
@@ -292,6 +294,28 @@ class BulkStorageBackfillingTest
         copier.copied.get() shouldBe empty
         progress.complete.get() shouldBe 0
       }
+    }
+
+    "log an error and wait when no peer will ever hold the objects it needs" in {
+      val progress = new InMemoryProgress
+      val copier = new RecordingCopier
+      loggerFactory
+        .assertLogs(
+          service(
+            progress,
+            copier,
+            new FakeListing(folders, snapshots, noPeerWillHold = true),
+            new SequenceBound(BackfillEnd.CopyUpTo(ts(4))),
+            pageSize = 3,
+          ).mksrc().take(2).runWith(Sink.seq),
+          _.errorMessage should include("No peer will ever hold update objects up to"),
+          _.errorMessage should include("No peer will ever hold update objects up to"),
+        )
+        .map { steps =>
+          steps shouldBe Seq.fill(2)(BulkStorageBackfilling.NoPeerHolds(CantonTimestamp.MinValue))
+          copier.copied.get() shouldBe empty
+          progress.complete.get() shouldBe 0
+        }
     }
 
     "set the marker without copying when this Scan holds history from genesis" in {
