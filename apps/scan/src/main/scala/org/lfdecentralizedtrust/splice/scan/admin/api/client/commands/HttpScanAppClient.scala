@@ -3358,7 +3358,8 @@ object HttpScanAppClient {
   }
 
   case class GetBulkObjectsProgress(
-      recordTime: CantonTimestamp
+      recordTime: CantonTimestamp,
+      bucket: definitions.BulkStorageBucket,
   ) extends InternalBaseCommand[
         http.GetBulkObjectsProgressResponse,
         definitions.GetBulkObjectsProgressResponse,
@@ -3369,6 +3370,7 @@ object HttpScanAppClient {
     ): EitherT[Future, Either[Throwable, HttpResponse], http.GetBulkObjectsProgressResponse] =
       client.getBulkObjectsProgress(
         recordTime.toInstant.atOffset(java.time.ZoneOffset.UTC),
+        Some(bucket),
         headers,
       )
 

@@ -170,6 +170,7 @@ class BulkStorage(
     storageConfig,
     stagingConnection,
     committedConnection,
+    () => historyStart.get.map(_.map(_.firstOwnSegmentStart(storageConfig))),
     loggerFactory,
   )
 
