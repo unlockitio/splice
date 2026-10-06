@@ -967,11 +967,7 @@ class BftScanConnection(
       ec: ExecutionContext,
       tc: TraceContext,
   ): Future[Option[BulkStorageObjects.SnapshotObjects]] =
-    bftCall(
-      _.listBulkAcsSnapshotObjects(atOrBeforeRecordTime),
-      "listBulkAcsSnapshotObjects",
-      consensusFailureLogLevel = Level.DEBUG,
-    )
+    listBulkAcsSnapshotObjectsWithHolders(atOrBeforeRecordTime).map(_._1)
 
   override def listBulkUpdateHistoryObjects(
       startRecordTime: CantonTimestamp,
@@ -979,10 +975,44 @@ class BftScanConnection(
       pageSize: Int,
       nextPageToken: Option[String],
   )(implicit ec: ExecutionContext, tc: TraceContext): Future[BulkStorageObjects.UpdateObjectsPage] =
-    bftCall(
-      _.listBulkUpdateHistoryObjects(startRecordTime, endRecordTime, pageSize, nextPageToken),
-      "listBulkUpdateHistoryObjects",
-      consensusFailureLogLevel = Level.DEBUG,
+    committedBulkCall(endRecordTime, "listBulkUpdateHistoryObjects")(
+      _.listBulkUpdateHistoryObjects(startRecordTime, endRecordTime, pageSize, nextPageToken)
+    ).map(_._1)
+
+  def listBulkAcsSnapshotObjectsWithHolders(atOrBeforeRecordTime: CantonTimestamp)(implicit
+      ec: ExecutionContext,
+      tc: TraceContext,
+  ): Future[(Option[BulkStorageObjects.SnapshotObjects], List[Uri])] =
+    committedBulkCall(atOrBeforeRecordTime, "listBulkAcsSnapshotObjects")(
+      _.listBulkAcsSnapshotObjects(atOrBeforeRecordTime)
+    )
+
+  def listBulkUpdateHistoryObjectsWithHolders(
+      startRecordTime: CantonTimestamp,
+      endRecordTime: CantonTimestamp,
+      pageSize: Int,
+      availableAt: CantonTimestamp,
+  )(implicit
+      ec: ExecutionContext,
+      tc: TraceContext,
+  ): Future[(BulkStorageObjects.UpdateObjectsPage, List[Uri])] =
+    committedBulkCall(availableAt, "listBulkUpdateHistoryObjects")(
+      _.listBulkUpdateHistoryObjects(startRecordTime, endRecordTime, pageSize, None)
+    )
+
+  private def committedBulkCall[T](availableAt: CantonTimestamp, endpoint: String)(
+      call: SingleScanConnection => Future[T]
+  )(implicit ec: ExecutionContext, tc: TraceContext): Future[(T, List[Uri])] =
+    BftCallExecutor.bftCallForEventualConsistencyEndpoints(
+      scanList.scanConnections,
+      connectionMetrics,
+      retryProvider,
+      logger,
+      hasData = _.getBulkObjectsProgress(availableAt, BulkStorageBucket.Committed)
+        .map(BftScanConnection.dataAvailability),
+      getData = call,
+      endpoint = endpoint,
+      callConfig = BftCallConfig.default(scanList.scanConnections),
     )
 
   private def bftCall[T](
